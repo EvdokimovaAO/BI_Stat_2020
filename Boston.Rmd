@@ -1,0 +1,309 @@
+---
+title: "How to by apatrment in Boston?"
+output: 
+  html_document: 
+    highlight: pygments
+    theme: flatly
+    toc: yes
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+## Used libraries. Please, check the versions of your libraries
+
+```{r libraries}
+#R version 3.6.1 (2019-07-05)
+require(MASS) #version 7.3.51.6
+require(car) #version 3.0.8
+require(tibble) #version 3.0.1
+require(cowplot) #version 1.1.0
+require(gridExtra) #version 2.3
+require(corrplot) #version 0.84
+require(GGally) #version 2.0.0
+```
+
+
+In this research we we will try to find out how the average cost of an owner-occupied home in Boston in the 1970s and 1980s depends on various factors (this will be very helpful for someone who builds a time machine and decides to settle in Boston fifty years ago).
+
+# 1. The description of the data  
+
+We will use dataset Boston from "MASS" package. This dataset contains information about 506 census tracts of Boston from the 1970 census.We try to explore which factors affect the median value of homes and will perform a linear regression analysis on the same.  
+  
+**Data was taken from these articles:**   
+Harrison, D. and Rubinfeld, D.L. (1978) Hedonic prices and the demand for clean air. *J. Environ. Economics and Management* 5, 81–102.  
+Belsley D.A., Kuh, E. and Welsch, R.E. (1980) *Regression Diagnostics. Identifying Influential Data and Sources of Collinearity*. New York: Wiley.   
+  
+**The dataset has following features, medv being the target (dependent) variable:**  
+**crim**   per capita crime rate by town  
+**zn**   proportion of residential land zoned for lots over 25,000sq.ft.  
+**indus**   proportion of non-retail business acres per town  
+**chas**   Charles River dummy variable (= 1 if tract bounds river; 0 otherwise)  
+**nox**   nitrogen oxides concentration (parts per 10 million)  
+**rm**   average number of rooms per dwelling  
+**age**   proportion of owner-occupied units built prior to 1940  
+**dis**   weighted mean of distances to five Boston employment centres  
+**rad**   index of accessibility to radial highways  
+**tax**   full-value property-tax rate per \$10,000  
+**ptratio**   pupil-teacher ratio by town  
+**black**   *1000(Bk - 0.63)^2* where Bk is the proportion of blacks by town  
+**lstat**   lower status of the population (percent)  
+**medv**  median value of owner-occupied homes in USD 1000’s
+
+```{r look at the data}
+boston <- Boston
+str(boston)
+```
+  
+Here we can see that the variables ‘chas’ and ‘rad’ be factors. Transform them  
+  
+```{r}
+boston$chas <- factor(boston$chas)
+boston$rad <- factor(boston$rad)
+str(boston)
+```
+
+  
+  
+Plotting a boxplot of all variables to verify the outliers. We can see, that variables ‘crim’, ‘zn’, ‘rm’ and ‘black’ do have a lot of outliers
+
+
+```{r}
+par(mfrow = c(3, 4))
+boxplot(boston$crim, main='crim',col='Sky Blue')
+boxplot(boston$zn, main='zn',col='Sky Blue')
+boxplot(boston$indus, main='indus',col='Sky Blue')
+boxplot(boston$nox, main='nox',col='Sky Blue')
+boxplot(boston$rm, main='rm',col='Sky Blue')
+boxplot(boston$age, main='age',col='Sky Blue')
+boxplot(boston$dis, main='dis',col='Sky Blue')
+boxplot(boston$tax, main='tax',col='Sky Blue')
+boxplot(boston$ptratio, main='ptratio',col='Sky Blue')
+boxplot(boston$black, main='black',col='Sky Blue')
+boxplot(boston$lstat, main='lstat',col='Sky Blue')
+boxplot(boston$medv, main='medv',col='Sky Blue')
+```
+
+
+
+Look at correlation between all variables using corrplot  
+
+```{r}
+corrplot(cor(boston[, -c(4, 9)]))
+```
+
+Since this is a linear regression experiment which involves looking at how value of homes in Boston may vary with the different factors, it makes sense to see the trends of all the variables. 
+
+```{r}
+#look at the structure of the data
+ggpairs(boston[, -c(4, 9)],
+        progress = FALSE, 
+        lower = list(combo = wrap(ggally_facethist, binwidth = 0.5))) +
+  ggtitle('The corralation and distribution matrix')
+```
+
+
+# 2. Building a linear model
+
+The variables in the dataset are measured in different quantities: the particle size in millimeters, respectively, and the coefficients in front of these predictors will be on different scales and cannot be compared directly. Therefore, before building a linear model, we must standardize the data. Then the coefficients in front of the predictors will be measured in standard deviations and can be compared.
+
+**Note: This model does not account for the interaction of predictors**
+
+## 2.1 Standartization and building the linear model 
+
+```{r standartization}
+boston$qlstat <- boston$lstat ^ 2
+boston_scale <- as.data.frame(sapply(boston[,-c(4, 9)], scale))
+str(boston_scale)
+#standartization of numeric variables
+#add variables chas and rad into new scaled dataset
+boston_scale <- add_column(boston_scale, boston[4], .after = 3)
+boston_scale <- add_column(boston_scale, boston[9], .after = 8)
+
+str(boston_scale)
+```
+
+```{r lm}
+mod_1 <-lm(medv ~ crim + zn + indus + chas + nox
+              + rm + age + dis + rad + tax + 
+                ptratio + black + lstat, data = boston_scale)
+summary(mod_1)
+```
+
+
+## 2.2 Searching for an optimal model
+
+
+### 2.2.1 Step-by-step selection of predictors by significance
+
+We will use backward selection to select significant predictors. The selection criterion is a private F-test. We will remove the predictor from the model if it does not significantly affect the amount of variability explained by the model. 
+
+```{r}
+drop1(mod_1, test = "F")
+summary(mod_1)
+```
+  
+  
+Variables ‘age’ and ‘indus’ have low significance hence removing them could give us a better model:
+  
+  
+```{r}
+mod_2 <- update(mod_1, .~. - age-indus)
+drop1(mod_2, test = "F")
+summary(mod_2)
+```
+  
+We see that our model has not deteriorated - even improved a little:  
+Adjusted R-squared:  0.7396 (mod_1)  
+Adjusted R-squared:  0.7405 (mod_2)
+
+
+### 2.2.2 Сhecking multicollinearity of predictors
+
+The absence of collinearity between predictors is one of the conditions for the applicability of the linear model. Therefore, our next step is to check this condition and remove collinear predictors from the model. 
+
+```{r}
+vif(mod_2)
+``` 
+
+```{r}
+mod_3 <- update(mod_2, .~. - tax) #removing rad
+vif(mod_3)
+```
+  
+  
+```{r}
+summary(mod_3)
+```
+
+Adjusted R-squared:  0.7382  
+  
+As we noticed earlier **lstat** is non-linear and hence can be squared for a better fit. So we try to to add variabe **qlstat** == **lstat** to our model. We do this after checking for collinearity, because obviously variable **qlstat** will correlate **lstat**, which will distort the analysis.
+
+```{r}
+mod_4 <- update(mod_3, .~. + qlstat)
+summary(mod_4)
+```
+  
+  
+Adjusted R-squared:  0.7828 - it's a good! **Final model - mod_4** 
+
+
+We removed some multicollinear and non significant predictors, but our model became worse. Most likely, we threw out too many predictors, so let's check unaccounted dependencies
+
+### Checking unrecorded dependencies  
+  
+We removed some predictors from the model, we need to check the unaccounted for dependencies. Let's build graphs of the dependence of the residuals on the predictors that were not included in the model. 
+
+```{r}
+mod_diag_4 <- fortify(mod_4)
+
+gg_resid <- ggplot(data = mod_diag_4, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+
+res_1 <- gg_resid + aes(x = boston_scale$age) + xlab('age')
+res_2 <- gg_resid + aes(x = boston_scale$indus) + xlab('indus')
+res_3 <- gg_resid + aes(x = boston_scale$tax) + xlab('tax')
+
+grid.arrange(res_1, res_2, res_3, nrow = 1)
+
+```
+
+  
+  
+## 2.3 Model Diagnostics
+  
+We can see that the residuals plot looks pretty good (apart from a few observations outside 2 standard deviations), as does Cook's distance plot. This means that our dependence is linear, and there are no influential observations. The quantile graph looks worse.  
+
+#### Normality of distribution  
+
+```{r}
+qqPlot(mod_diag_4$.fitted)
+```
+
+
+#### Checking influential observations
+
+```{r}
+ggplot(mod_diag_4, aes(x = 1:nrow(mod_diag_4), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red")
+```
+
+
+#### Checking the linearity of the corelation  
+
+```{r}
+ggplot(data = mod_diag_4, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+```
+  
+  
+  
+# 3. Prediction
+
+Let's build a graph of cost predictions from a variable that has
+the largest modulo coefficient (**lstat**)
+
+```{r}
+summary(mod_4)
+```
+
+```{r}
+#dataset with predictors
+var_data <- data.frame(crim = mean(boston$crim),
+                       zn = mean(boston$zn),
+                       chas = boston$chas,
+                       nox = mean(boston$nox),
+                       rm = mean(boston$rm),
+                       dis = mean(boston$dis),
+                       rad = boston$rad,
+                       ptratio = mean(boston$ptratio),
+                       black = mean(boston$black),
+                       lstat = seq(min(boston$lstat), max(boston$lstat), length.out = 506),
+                       qlstat = mean(boston$qlstat))
+
+#predicted values
+Predictions <- predict(mod_4, newdata = var_data,  interval = 'confidence')
+pred_data <- data.frame(var_data, Predictions)
+
+#Model prediction plot
+ggplot(pred_data, aes(x = lstat, y = fit)) +
+  geom_ribbon(alpha = 0.2, aes(ymin = lwr, ymax = upr)) +
+  geom_line(col = 'red') + 
+  ggtitle("Dependence of the predicted values of medv on lstat")
+```
+
+
+
+# 4. Summary
+  
+We got the multiple linear model, which include next predictors:  
+**crim**   per capita crime rate by town  
+**zn**   proportion of residential land zoned for lots over 25,000sq.ft.  
+**chas**   Charles River dummy variable (= 1 if tract bounds river; 0 otherwise)  
+**nox**   nitrogen oxides concentration (parts per 10 million)  
+**rm**   average number of rooms per dwelling  
+**dis**   weighted mean of distances to five Boston employment centres  
+**rad**   index of accessibility to radial highways  
+**ptratio**   pupil-teacher ratio by town  
+**black**   *1000(Bk - 0.63)^2* where Bk is the proportion of blacks by town  
+**lstat**   lower status of the population (percent)  
+Adjusted R-squared = 0.7828, but we do not believe that the constructed linear model is good. The distribution of the predicted values deviates from the normal, and the plot of the residuals is poor. There are several ways to improve our model:  
+1. Remove outliers gently  
+2. Add interactions between predictors to the model
+ 
+
+But now, we advise you to use this model with caution.
+  
+  
+
