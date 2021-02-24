@@ -1,0 +1,557 @@
+---
+title: "Mouses"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+require(knitr)
+require(rgl)
+require(rglwidget)
+options(rgl.useNULL = TRUE)
+knit_hooks$set(webgl = hook_webgl)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+## Used libraries. Please, check the versions of your libraries
+
+```{r libraries}
+require(stringr) # version 1.4.0
+require(readxl) # version 1.3.1
+require(car) # version 3.0.10
+require(ggplot2) # version 3.3.3
+require(multcomp) # version 1.4.15
+require(corrplot) # version 1.4.0
+require(dplyr) # version 0.84
+require(vegan) # version 2.5.7
+require(RColorBrewer) # version 1.1.2
+require(gridExtra) # version 2.3
+```
+
+
+In this research we trying to figure out how Down Syndrome in mice affect on the expression level of different proteins. Data was taken from article: [Ahmed MM, Dhanasekaran AR, Block A, Tong S, Costa AC, Stasko M, Gardiner KJ. Protein dynamics associated with failed and rescued learning in the Ts65Dn mouse model of Down syndrome. PLoS One. 2015 Mar 20;10(3):e0119491. doi: 10.1371/journal.pone.0119491. PMID: 25793384; PMCID: PMC4368539](https://doi.org/10.1371/journal.pone.0119491).
+
+# 1. The description of the data  
+
+### Structure of the data
+```{r}
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/00342/Data_Cortex_Nuclear.xls"
+destfile <- "Data_Cortex_Nuclear.xls"
+curl::curl_download(url, destfile)
+data <- read_excel(destfile)
+str(data)
+```
+
+Vatiables ***Genotype***, ***Treatment*** ***Behavior*** and ***class*** should be factors. 
+
+```{r}
+data$Genotype <- as.factor(data$Genotype)
+data$Treatment <- as.factor(data$Treatment)
+data$Behavior <- as.factor(data$Behavior)
+data$class <- as.factor(data$class)
+```
+
+
+### The amount of mouses in the experiment
+
+The experiment involved ```r length(unique(str_remove(data$MouseID, pattern = '_.*')))``` mice. Next table shows, that 15 measurements were registered of each protein per mice. The are ```r length(data$Genotype[data$Genotype == 'Control'])``` control measurements (```r length(data$Genotype[data$Genotype == 'Control']) / 15``` mice) and ```r length(data$Genotype[data$Genotype == 'Ts65Dn'])``` trisomic measurements (```r length(data$Genotype[data$Genotype == 'Ts65Dn']) / 15``` mice). 
+
+```{r}
+table(str_remove(data$MouseID, pattern = '_.*'))
+```
+
+
+### Group of measurements
+
+In this experiment we can distinguish ```r length(unique(data$class)) ``` groups: 
+
+- c-CS-s: control mice, stimulated to learn, injected with saline (```r length(data$Genotype[data$class == 'c-CS-s']) / 15``` mice)  
+- c-CS-m: control mice, stimulated to learn, injected with memantine (```r length(data$Genotype[data$class == 'c-CS-m']) / 15``` mice)  
+- c-SC-s: control mice, not stimulated to learn, injected with saline (```r length(data$Genotype[data$class == 'c-SC-s']) / 15``` mice)  
+- c-SC-m: control mice, not stimulated to learn, injected with memantine (```r length(data$Genotype[data$class == 'c-SC-m']) / 15``` mice)  
+  
+- t-CS-s: trisomy mice, stimulated to learn, injected with saline (```r length(data$Genotype[data$class == 't-CS-s']) / 15``` mice)    
+- t-CS-m: trisomy mice, stimulated to learn, injected with memantine (```r length(data$Genotype[data$class == 't-CS-m']) / 15``` mice)  
+- t-SC-s: trisomy mice, not stimulated to learn, injected with saline (```r length(data$Genotype[data$class == 't-SC-s']) / 15``` mice)   
+- t-SC-m: trisomy mice, not stimulated to learn, injected with memantine (```r length(data$Genotype[data$class == 't-SC-m']) / 15``` mice)   
+
+Look again at the numbers of mearurements in each group and make sure the groups are not balanced:  
+
+```{r}
+table(data$class)
+```
+
+
+### Missing values NA
+
+In our data the are `r sum(is.na(data))` of missing values, let look at their distribution:  
+
+```{r}
+kable(colSums(is.na(data)), col.names = c("NA"))
+```
+
+
+We have a lot of missing values, so there are two way of solution these problem:
+
+##### Hard: remove all missing vulues
+
+```{r}
+hdata <- na.omit(data)
+table(hdata$class)
+```
+
+We got an even stronger variation in the number of observations between groups, besides we remove almost half of observations. 
+
+##### Sotf: we can notice, that most of the missing values are for six proteins: BAD_N, BCL2_N, pCFOS_N, H3AcK18_N, EGR1_N, and H3MeK4_N. Let's remove these variable, and only after that remove the rest NA
+
+```{r}
+sdata <- subset(data, select = -c(BAD_N, BCL2_N, pCFOS_N, H3AcK18_N, EGR1_N, H3MeK4_N))
+sdata <- na.omit(sdata)
+```
+
+```{r}
+table(sdata$class)
+```
+
+We removed six proteins from the analysis, but received more observations and less imbalance in groups. In subsequent analysis we will use this new dataset. 
+
+
+
+# 2. Differences in the BDNF_N expression level
+### 2.1 Visualization
+
+First of all, evaluate the differences between groups graphically. 
+```{r}
+ggplot(data = sdata, aes(x = BDNF_N , y = class)) +
+  stat_summary(geom = 'pointrange', fun.data = mean_cl_normal, position = position_dodge(width = 0.2)) + ggtitle("Dependence of BDNF_N expression from group")
+```
+
+### 2.2 Analisys
+
+```{r}
+model <- lm(BDNF_N ~ class , data=sdata)
+anova <- Anova(mod = model)
+summary(anova)
+```
+
+### 2.3 Conditions of applicability
+
+There are no influential observations, the dispersion of the residues is homogeneous, the distribution of the residues is close to normal. This means that our linear model is quite applicable.  
+
+```{r}
+model_diag <- fortify(model)
+
+ggplot(model_diag, aes(x = 1:nrow(model_diag), y = .cooksd)) +
+  geom_bar(stat = 'identity') +
+  geom_hline(yintercept = 2, color = 'red')
+```
+
+
+```{r}
+ggplot(data = model_diag, aes(x = BDNF_N, y = .stdresid, color = class)) +
+  geom_boxplot() + geom_hline(yintercept = 0)
+```
+
+```{r}
+qqPlot(model, id = FALSE) 
+```
+
+### 2.4 Results
+
+```{r}
+anova
+```
+
+**Experiments group significantly affects protein expression level: F =18.951 , p_value = 2.2e-16, df = 7**  
+  
+### 2.4 Post-hoc tests
+We found that the group is a significant factor in assessing BDNF_N expression. To see which groups differ from each other, we will use Tukey's post-hoc test.
+
+```{r}
+fit_inter <- lm(BDNF_N ~ class - 1, data = sdata)
+tukey <- glht(fit_inter, linfct = mcp(class= 'Tukey'))
+summary(tukey)
+```
+
+### 2.5 Visualization of post-hos test
+
+```{r}
+MyData <- expand.grid(class = sdata$class)
+MyData <- data.frame(
+  MyData,
+  predict(model, newdata = MyData, interval = 'confidence')
+)
+
+ggplot(data = MyData, aes(x = class, y = fit,
+                          ymin = lwr, ymax = upr, colour = class)) +
+  geom_point(position = position_dodge(width = 0.2)) +
+  geom_errorbar(position = position_dodge(width = 0.2), width =0.2 ) +
+  ggtitle('Post-hoc test Tukey results')
+```
+
+# 3. Dependence of expression level of ERBB4_N from other proteins
+We will try to build a linear model that can predict the level
+ERBB4_N protein production based on data on other proteins in the experiment.  
+We have a lot of predictors, so corralation matrix will be not informatively. We just start to build a linear model.
+Notice, that this is a very bad idea, because we have `r length(sdata[,-c(1, 73:76)]) - 1` predictors. It is obvious that we will have a lot of autocorrelations.
+
+```{r}
+lm1 <- lm(ERBB4_N ~ ., data = sdata[,-c(1, 73:76)])
+summary(lm1)
+```
+
+Adjusted R-squared:  0.8098
+
+## 3.2 Searching for an optimal model
+
+
+### 3.2.1 Step-by-step selection of predictors by significance
+
+We will use backward selection to select significant predictors. The selection criterion is a private F-test. We will remove the predictor from the model if it does not significantly affect the amount of variability explained by the model. 
+
+```{r}
+drop1(lm1, test = "F")
+summary(lm1)
+```
+
+```{r}
+lm2 <- update(lm1, .~.-DYRK1A_N-BDNF_N-NR2A_N-pBRAF_N-pCAMKII_N-pELK_N-pERK_N-
+               pJNK_N-pMEK_N-pNR1_N-pNR2A_N-pNR2B_N-pPKCAB_N-pRSK_N-
+               AKT_N-CAMKII_N-ELK_N-GSK3B_N-JNK_N-MEK_N-TRKA_N-APP_N-
+               Bcatenin_N-SOD1_N-P38_N- DSCR1_N-AMPKA_N-NR2B_N-pNUMB_N-
+               RAPTOR_N-TIAM1_N-pP70S6_N-NUMB_N-P70S6_N-CDK5_N-S6_N-ADARB1_N-
+               BAX_N-ARC_N-nNOS_N-GluR4_N-SNCA_N-Ubiquitin_N-SHH_N-pS6_N)
+drop1(lm2, test = "F")
+summary(lm2)
+```
+
+```{r}
+lm3 <- update(lm2, .~. -ITSN1_N)
+drop1(lm3, test = "F")
+summary(lm3)
+```
+
+```{r}
+lm4 <- update(lm3, .~. -RSK_N)
+drop1(lm4, test = "F")
+summary(lm4)
+```
+
+Adjusted R-squared:  0.7947  
+
+
+### 3.2.2 Сhecking multicollinearity of predictors
+
+The absence of collinearity between predictors is one of the conditions for the applicability of the linear model. Therefore, our next step is to check this condition and remove collinear predictors from the model. 
+
+```{r}
+vif(lm4)
+```
+
+```{r}
+lm5 <- update(lm4, .~.-NR1_N)
+drop1(lm5)
+summary(lm5)
+vif(lm5)
+```
+
+
+```{r}
+lm6 <- update(lm5, .~.-PKCA_N)
+drop1(lm6)
+summary(lm6)
+vif(lm6)
+```
+
+
+```{r}
+lm7 <- update(lm6, .~.-CREB_N)
+drop1(lm7)
+summary(lm7)
+vif(lm7)
+```
+
+
+```{r}
+lm8 <- update(lm7, .~.-pMTOR_N)
+drop1(lm8)
+summary(lm8)
+vif(lm8)
+```
+
+
+```{r}
+lm9 <- update(lm8, .~.-AcetylH3K9_N)
+drop1(lm9)
+summary(lm9)
+vif(lm9)
+```
+
+
+```{r}
+lm10 <- update(lm9, .~.-GFAP_N-CaNA_N)
+drop1(lm10)
+summary(lm10)
+vif(lm10)
+```
+
+
+```{r}
+lm11 <- update(lm10, .~.-IL1B_N)
+drop1(lm11)
+summary(lm11)
+vif(lm11)
+```
+
+
+```{r}
+lm12 <- update(lm11, .~.-pGSK3B_N)
+drop1(lm12)
+summary(lm12)
+vif(lm12)
+```
+
+
+```{r}
+lm13 <- update(lm12, .~.-pAKT_N)
+drop1(lm13)
+summary(lm13)
+vif(lm13)
+```
+
+
+```{r}
+lm14 <- update(lm13, .~.-pCREB_N-ERK_N)
+drop1(lm14)
+summary(lm14)
+vif(lm14)
+```
+
+```{r}
+lm15 <- update(lm14, .~.-pGSK3B_Tyr216_N)
+drop1(lm15)
+summary(lm15)
+vif(lm15)
+```
+
+```{r}
+lm16 <- update(lm15, .~.-pCASP9_N)
+drop1(lm16)
+summary(lm16)
+vif(lm16)
+```
+
+Adjusted R-squared:  0.7097
+
+
+### Checking unrecorded dependencies  
+  
+We removed some predictors from the model, we need to check the unaccounted for dependencies. Let's build graphs of the dependence of the residuals on the predictors that were not included in the model.
+
+```{r warning=FALSE, message=FALSE}
+mod_diag16 <- fortify(lm16)
+gg_resid <- ggplot(data = lm16, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+
+res_1 <- gg_resid + aes(x = sdata$ITSN1_N) + xlab('ITSN1_N')
+res_2 <- gg_resid + aes(x = sdata$RSK_N) + xlab('RSK_N')
+res_3 <- gg_resid + aes(x = sdata$NR1_N) + xlab('NR1_N')
+res_4 <- gg_resid + aes(x = sdata$PKCA_N) + xlab('PKCA_N')
+res_5 <- gg_resid + aes(x = sdata$CREB_N) + xlab('CREB_N')
+res_6 <- gg_resid + aes(x = sdata$pMTOR_N) + xlab('pMTOR_N')
+res_7 <- gg_resid + aes(x = sdata$AcetylH3K9_N) + xlab('AcetylH3K9_N')
+res_8 <- gg_resid + aes(x = sdata$GFAP_N) + xlab('GFAP_N')
+res_9 <- gg_resid + aes(x = sdata$CaNA_N) + xlab('CaNA_N')
+res_10 <- gg_resid + aes(x = sdata$IL1B_N) + xlab('IL1B_N')
+res_11 <- gg_resid + aes(x = sdata$pGSK3B_N) + xlab('pGSK3B_N')
+res_12 <- gg_resid + aes(x = sdata$pAKT_N) + xlab('pAKT_N')
+res_13 <- gg_resid + aes(x = sdata$pCREB_N) + xlab('pCREB_N')
+res_14 <- gg_resid + aes(x = sdata$ERK_N) + xlab('ERK_N')
+res_15 <- gg_resid + aes(x = sdata$pGSK3B_Tyr216_N) + xlab('pGSK3B_Tyr216_N')
+res_16 <- gg_resid + aes(x = sdata$pCASP9_N) + xlab('pCASP9_N')
+
+
+grid.arrange(res_1, res_2, res_3, res_4, res_5, res_6, res_7, res_8, res_9, res_10, res_11, res_12, res_13, res_14, res_15, res_16, nrow = 4)
+```
+
+We can see a correlation between dependence variable and IL1B_N, pAKT_N, pGSK3B_Tyr216_N, pCASP9_N. We should add this variables in the model.  
+
+Besides that, now that there are few predictors left, let's look at the correlation matrix:
+```{r}
+prot <- select(sdata, ERBB4_N, BRAF_N, MTOR_N, pPKCG_N, RRP1_N, Tau_N,
+    GluR3_N, P3525_N, PSD95_N, SYP_N)
+plot(prot, pch=20 , cex=1.5 , col="#69b3a2")
+```
+  
+We see, that variable BRAF_N and RRP1_N don't correlate with BDNF_N, we remove tham from the model:  
+```{r}
+lm17 <- update(lm16, .~.-BRAF_N-RRP1_N+IL1B_N+pAKT_N+pGSK3B_Tyr216_N+pCASP9_N)
+drop1(lm17)
+summary(lm17)
+```
+Adjusted R-squared:  0.7487
+
+## 3.3 Model Diagnostics
+  
+We can see that the residuals plot looks pretty good, as does Cook's distance plot. This means that our dependence is linear, and there are no influential observations. The quantile graph looks worse.  
+
+#### Normality of distribution  
+```{r}
+mod_diag17 <- fortify(lm17)
+qqPlot(mod_diag16$.fitted)
+```
+
+#### Checking influential observations
+
+```{r}
+ggplot(mod_diag17, aes(x = 1:nrow(mod_diag17), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red")
+```
+
+
+#### Checking the linearity of the corelation  
+
+```{r}
+ggplot(data = mod_diag17, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+```
+
+## 3.4 Prediction
+
+Let's build a graph of cost predictions from a variable that has
+the largest modulo coefficient (**P3525_N**)
+
+```{r}
+summary(lm17)
+```
+
+
+```{r}
+#dataset with predictors
+var_data <- data.frame(MTOR_N = mean(sdata$MTOR_N),
+                       pPKCG_N = mean(sdata$pPKCG_N),
+                       Tau_N = mean(sdata$Tau_N),
+                       GluR3_N = mean(sdata$GluR3_N),
+                       PSD95_N = mean(sdata$PSD95_N),
+                       SYP_N = mean(sdata$SYP_N),
+                       IL1B_N = mean(sdata$IL1B_N),
+                       pAKT_N = mean(sdata$pAKT_N),
+                       pGSK3B_Tyr216_N = mean(sdata$pGSK3B_Tyr216_N),
+                       pCASP9_N = mean(sdata$pCASP9_N),
+                       P3525_N = seq(min(sdata$P3525_N), max(sdata$P3525_N), length.out = 1047))
+
+#predicted values
+Predictions <- predict(lm17, newdata = var_data,  interval = 'confidence')
+pred_data <- data.frame(var_data, Predictions)
+
+#Model prediction plot
+ggplot(pred_data, aes(x = P3525_N, y = fit)) +
+  geom_ribbon(alpha = 0.2, aes(ymin = lwr, ymax = upr)) +
+  geom_line(col = 'red') + 
+  ggtitle("Dependence of the predicted values of ERBB4_N on P3525_N")
+```
+
+
+# 4. PCA
+
+### 4.1 Principal components 
+```{r}
+pca <- rda(sdata[, -c(1, 73:76)], scale = TRUE)
+head(summary(pca))
+```
+
+### 4.2 Eigenvectors graph, correlation biplot
+```{r}
+biplot(pca, scaling = "species", display = "species")
+```
+
+### 4.3 Ordination plot
+
+```{r webgl=TRUE}
+df_scores <- data.frame(sdata[, -c(1, 73:75)],
+                        scores(pca, display = "sites", choices = c(1, 2, 3), scaling = "sites"))
+
+mycolors <- brewer.pal(8, "Set1")
+df_scores$color <- mycolors[ as.numeric(df_scores$class)]
+
+
+plot3d( 
+  x = df_scores$PC1, y = df_scores$PC2, z = df_scores$PC3, 
+  col = df_scores$color, 
+  type = 's', 
+  radius = .015,
+  alpha = 0.7,
+  xlab="PC1", ylab="PC2", zlab="PC3",
+  main = 'Ordination in axes of three PC'
+)
+
+
+ggplot(df_scores, aes(x = PC1, y = PC2)) + 
+  geom_point(aes(color = class), alpha = 0.7) +
+  coord_equal(xlim = c(-1, 0.7), ylim = c(-0.6, 0.7)) +
+  scale_color_brewer(palette = 'Set1') +
+ ggtitle(label = "Ordination in axes of two PC") + theme_bw()
+
+```
+
+
+### 4.4 Interpretation
+
+#### 4.4.1 Number of PC
+
+Let's look at eigenvalues and eigenvalues plot:  
+```{r}
+eigenvals(pca)
+```
+```{r}
+bstick(pca)
+```
+
+```{r}
+screeplot(pca, type = "lines", bstick = TRUE)
+```
+
+Let's see how each component contributes to the overall variability:  
+
+```{r}
+head(summary(pca))
+```
+
+
+```{r}
+pca_summary <- summary(pca)
+pca_result <- as.data.frame(pca_summary$cont)
+plot_data <- as.data.frame(t(pca_result[c("Proportion Explained"),]))
+plot_data$component <- str_remove(rownames(plot_data), pattern = 'importance.')
+str(plot_data)
+
+plot_data %>%
+  arrange(desc(`Proportion Explained`)) %>% 
+  mutate(component=factor(component, levels=component)) %>% 
+  ggplot(aes(x=component, y=`Proportion Explained`)) +
+    geom_bar(stat = "identity", fill = 'orange', width=0.8) +
+    theme_bw() + 
+    scale_x_discrete(breaks = plot_data$component,
+                          labels = labels)
+```
+
+
+To interpret the components, we will take the first seven components, they explain 76% of the total variability (it's more than by Broken Stick Model), their main numbers are greater than 1. 
+
+#### 4.4.2 Component interpretation
+
+```{r}
+scores(pca, display = "species", choices = 1:7, scaling = 0)
+```
+
+
+
