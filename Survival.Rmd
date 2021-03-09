@@ -1,0 +1,147 @@
+---
+title: "Survival"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## Used libraries. Please, check the versions of your libraries
+
+```{r}
+require(survival) # version 3.2.3
+require(knitr) # version 1.29
+require(ggplot2) # version 3.3.3
+require(survminer) # version 0.4.7
+require(coin) # version 1.4.1
+library(dplyr)
+```
+
+In this work we will analise with Ovarian Cancer Survival Dataset - data about survival in a randomised trial comparing two treatments for ovarian cancer. Data was taken from this research: [Edmonson JH, Fleming TR, Decker DG, Malkasian GD, Jorgensen EO, Jefferies JA, Webb MJ, Kvols LK. Different chemotherapeutic sensitivities and host factors affecting prognosis in advanced ovarian carcinoma versus minimal residual disease. Cancer Treat Rep. 1979 Feb;63(2):241-7. PMID: 445503](https://pubmed.ncbi.nlm.nih.gov/445503/)  
+
+Variables in the data:  
+**futime**:	survival or censoring time  
+**fustat**:	censoring status  
+**age**:	in years  
+**resid.ds**:	residual disease present (1=no,2=yes)  
+**rx**:	treatment group  
+**ecog.ps**:	ECOG performance status (1 is better)  
+
+## 1. EDA
+### Structure of the data
+```{r}
+data <- ovarian
+str(data)
+```
+
+Variables **fustat**, **resid.ds**, **rx** and **ecog.ps** should be factors:
+
+```{r}
+#data$fustat <- factor(data$fustat, labels  = c(0, 1))
+#data$resid.ds <- factor(data$resid.ds, labels  = c(0, 1))
+#data$rx <- factor(data$rx)
+#data$ecog.ps <- factor(data$ecog.ps)
+#str(data)
+```
+
+We have ```r nrow(data)``` of observation. We have no missing values:
+
+```{r}
+kable(colSums(is.na(data)), col.names = c("NA"))
+```
+
+Now let'e take a look at simply summary of the data. Here the most interesting variables are **futime** and **age**:
+```{r}
+summary(data)
+```
+
+
+## 2. Kaplan–Meier plot
+
+```{r}
+km <- Surv(data$futime, data$fustat)
+km
+```
+
+```{r}
+km_fit <- survfit(Surv(futime, fustat) ~ 1, data = data)
+summary(km_fit)
+
+ggsurvplot(km_fit, data = data, conf.int = TRUE, title = "General survival plot")
+```
+
+
+
+
+
+```{r}
+km_trt_fit <- survfit(Surv(futime, fustat) ~ rx, data=data)
+ggsurvplot(km_trt_fit, data = data, conf.int = TRUE, title = "Survival by treatment",
+           palette = 'Dark2')
+```
+
+```{r}
+km_res_fit <- survfit(Surv(futime, fustat) ~ resid.ds, data=data)
+ggsurvplot(km_res_fit, data = data, conf.int = TRUE, title = "Survival by residual desease",
+           palette = 'Dark2')
+```
+
+
+```{r}
+data <- mutate(data, AG = ifelse((age < 57), "LT57", "OV57"))
+
+km_AG_fit <- survfit(Surv(futime, fustat) ~ AG, data = data)
+ggsurvplot(km_AG_fit, data = data, conf.int = TRUE, title = "Survival by age",
+           palette = 'Dark2')
+```
+
+We can see, that survival is higher in patients with alternative treatment, without residual desease and younger that 57 y.o. 
+
+## 3. Log-rank tests
+
+Estimate if the difference in survival between groups:
+
+```{r}
+logrank_test(Surv(futime, fustat) ~ as.factor(rx), data = data)
+```
+
+```{r}
+logrank_test(Surv(futime, fustat) ~ as.factor(resid.ds), data = data)
+```
+
+```{r}
+logrank_test(Surv(futime, fustat) ~ as.factor(ecog.ps), data = data)
+```
+```{r}
+logrank_test(Surv(futime, fustat) ~ as.factor(AG), data = data)
+```
+
+These test show us, that there is no difference. 
+
+
+## 4. Analysis of factors influencing risk (Cox model)
+```{r}
+cox <- coxph(Surv(futime, fustat) ~ rx + resid.ds + ecog.ps + age, data = data)
+summary(cox)
+cox_fit <- survfit(cox)
+ggsurvplot(cox_fit, data = data, conf.int = TRUE, title = "Cox model")
+```
+
+We can see, that the only factor that really affects survival is age.
+
+Analysis of covariance:
+```{r}
+aa_fit <- aareg(Surv(futime, fustat) ~ rx + resid.ds + ecog.ps + age, data = data)
+autoplot(aa_fit)
+```
+
+
+Hazard Ratio:
+```{r}
+fit.coxph <- coxph(Surv(futime, fustat) ~ as.factor(rx) + as.factor(resid.ds) + as.factor(ecog.ps) + age, data = data)
+summary(fit.coxph)
+ggforest(fit.coxph, data = data) 
+```
+
+
